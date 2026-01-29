@@ -107,17 +107,46 @@ function calculateTotalGapScore(sessions: TimetableSession[]): number {
 }
 
 /**
- * Compare two schedule results - prioritize fewer clashes, then fewer gaps
+ * Calculate how evenly classes are distributed across days
+ * Lower score = more balanced distribution
+ * Uses variance of classes per day
+ */
+function calculateDistributionScore(sessions: TimetableSession[]): number {
+  const dayCounts: { [day: string]: number } = {
+    'Monday': 0, 'Tuesday': 0, 'Wednesday': 0, 'Thursday': 0, 'Friday': 0
+  };
+  
+  sessions.forEach(session => {
+    if (dayCounts[session.day] !== undefined) {
+      dayCounts[session.day]++;
+    }
+  });
+  
+  const counts = Object.values(dayCounts);
+  const total = counts.reduce((a, b) => a + b, 0);
+  if (total === 0) return 0;
+  
+  const avg = total / counts.length;
+  // Calculate variance (lower = more evenly distributed)
+  const variance = counts.reduce((sum, count) => sum + Math.pow(count - avg, 2), 0) / counts.length;
+  
+  return Math.round(variance * 100); // Scale for comparison
+}
+
+/**
+ * Compare two schedule results
+ * Priority: 1. Fewer clashes, 2. Better distribution, 3. Fewer gaps
  */
 function isBetterSchedule(candidate: CombinationResult, current: CombinationResult): boolean {
   // First priority: fewer clashes
-  if (candidate.clashCount < current.clashCount) {
-    return true;
-  }
-  if (candidate.clashCount > current.clashCount) {
-    return false;
-  }
-  // Same clash count: prefer fewer gaps
+  if (candidate.clashCount < current.clashCount) return true;
+  if (candidate.clashCount > current.clashCount) return false;
+  
+  // Second priority: better day distribution
+  if (candidate.distributionScore < current.distributionScore) return true;
+  if (candidate.distributionScore > current.distributionScore) return false;
+  
+  // Third priority: fewer gaps
   return candidate.gapScore < current.gapScore;
 }
 
@@ -204,6 +233,7 @@ interface CombinationResult {
   schedule: TimetableSession[];
   clashCount: number;
   gapScore: number; // Total gap minutes between classes (lower is better)
+  distributionScore: number; // How evenly classes are spread (lower is better)
 }
 
 /**
@@ -226,11 +256,13 @@ function findBestCombination(
     const validSchedule = filterValidSessions(currentSchedule);
     const clashes = detectClashes(validSchedule);
     const gapScore = calculateTotalGapScore(validSchedule);
+    const distributionScore = calculateDistributionScore(validSchedule);
     return {
       assignments: { ...currentAssignments },
       schedule: validSchedule,
       clashCount: clashes.length,
       gapScore,
+      distributionScore,
     };
   }
 
@@ -240,6 +272,7 @@ function findBestCombination(
     schedule: [],
     clashCount: Infinity,
     gapScore: Infinity,
+    distributionScore: Infinity,
   };
 
   // Try each section for this course
@@ -249,14 +282,18 @@ function findBestCombination(
     const newAssignments = { ...currentAssignments, [courseName]: section };
     const newSchedule = [...currentSchedule, ...sectionSessions];
 
-    // Early pruning: if current partial schedule already has more clashes than best, skip
-    // Only check if we have at least 2 courses to compare
-    if (bestResult.clashCount === 0 && index >= 1) {
-      const partialClashes = detectClashes(filterValidSessions(newSchedule));
-      if (partialClashes.length > 0) {
-        // This branch will have clashes, but we already have a clash-free solution
-        // Skip this branch entirely
-        continue;
+    // Early pruning: quick clash check on new sessions only (faster)
+    if (bestResult.clashCount === 0 && currentSchedule.length > 0) {
+      // Check if new sessions clash with existing schedule
+      const hasQuickClash = sectionSessions.some(newSession =>
+        currentSchedule.some(existing =>
+          existing.courseName !== newSession.courseName &&
+          existing.day === newSession.day &&
+          doSessionsOverlap(existing, newSession)
+        )
+      );
+      if (hasQuickClash) {
+        continue; // Skip this branch - it has clashes but we have a clash-free solution
       }
     }
 
