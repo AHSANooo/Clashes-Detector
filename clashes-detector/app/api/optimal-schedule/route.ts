@@ -5,15 +5,15 @@ import { findOptimalSchedule, formatClash } from '@/lib/clash-detector';
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { batch, selectedCourseNames, excludedAssignments } = body as {
-      batch: string;
+    const { batches, selectedCourseNames, excludedAssignments } = body as {
+      batches: string[];
       selectedCourseNames: string[];
       excludedAssignments?: { [courseName: string]: string[] };
     };
 
-    if (!batch) {
+    if (!batches || batches.length === 0) {
       return NextResponse.json(
-        { error: 'Batch is required' },
+        { error: 'At least one batch is required' },
         { status: 400 }
       );
     }
@@ -25,12 +25,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get all sessions for the batch
-    const allSessions = await getAllSessionsForBatch(batch);
+    // Get all sessions for all selected batches
+    const allSessionsPromises = batches.map(batch => getAllSessionsForBatch(batch));
+    const allSessionsArrays = await Promise.all(allSessionsPromises);
+    const allSessions = allSessionsArrays.flat();
 
     if (allSessions.length === 0) {
       return NextResponse.json(
-        { error: `No sessions found for batch: ${batch}` },
+        { error: `No sessions found for selected batches` },
         { status: 404 }
       );
     }

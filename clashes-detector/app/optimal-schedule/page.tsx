@@ -16,11 +16,13 @@ interface OptimalResult {
 export default function OptimalSchedulePage() {
   const [courses, setCourses] = useState<Course[]>([]);
   const [batches, setBatches] = useState<string[]>([]);
-  const [selectedBatch, setSelectedBatch] = useState('');
+  const [selectedBatches, setSelectedBatches] = useState<string[]>([]);
   const [selectedCourseNames, setSelectedCourseNames] = useState<string[]>([]);
   const [excludedAssignments, setExcludedAssignments] = useState<{ [courseName: string]: string[] }>({});
   const [searchQuery, setSearchQuery] = useState('');
+  const [batchSearchQuery, setBatchSearchQuery] = useState('');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [isBatchDropdownOpen, setIsBatchDropdownOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,13 +56,20 @@ export default function OptimalSchedulePage() {
     }
   };
 
-  // Get unique course names for selected batch
+  // Filter batches based on search
+  const filteredBatches = useMemo(() => {
+    if (!batchSearchQuery) return batches;
+    const query = batchSearchQuery.toLowerCase();
+    return batches.filter(batch => batch.toLowerCase().includes(query));
+  }, [batches, batchSearchQuery]);
+
+  // Get unique course names for selected batches
   const availableCourseNames = useMemo(() => {
-    if (!selectedBatch) return [];
-    const batchCourses = courses.filter(c => c.batch === selectedBatch);
+    if (selectedBatches.length === 0) return [];
+    const batchCourses = courses.filter(c => selectedBatches.includes(c.batch));
     const names = Array.from(new Set(batchCourses.map(c => c.name)));
     return names.filter(n => !n.toLowerCase().includes('cancelled')).sort();
-  }, [courses, selectedBatch]);
+  }, [courses, selectedBatches]);
 
   // Filter course names based on search
   const filteredCourseNames = useMemo(() => {
@@ -68,6 +77,28 @@ export default function OptimalSchedulePage() {
     const query = searchQuery.toLowerCase();
     return availableCourseNames.filter(name => name.toLowerCase().includes(query));
   }, [availableCourseNames, searchQuery]);
+
+  // Toggle batch selection
+  const toggleBatch = (batch: string) => {
+    const isSelected = selectedBatches.includes(batch);
+    if (isSelected) {
+      setSelectedBatches(prev => prev.filter(b => b !== batch));
+      // Remove courses that are no longer available
+      const remainingBatches = selectedBatches.filter(b => b !== batch);
+      const remainingCourses = courses.filter(c => remainingBatches.includes(c.batch));
+      const remainingCourseNames = Array.from(new Set(remainingCourses.map(c => c.name)));
+      setSelectedCourseNames(prev => prev.filter(n => remainingCourseNames.includes(n)));
+    } else {
+      setSelectedBatches(prev => [...prev, batch]);
+    }
+    setShowSchedule(false);
+    setResult(null);
+  };
+
+  // Remove selected batch
+  const removeBatch = (batch: string) => {
+    toggleBatch(batch);
+  };
 
   // Toggle course selection
   const toggleCourseName = (name: string) => {
@@ -113,8 +144,8 @@ export default function OptimalSchedulePage() {
 
   // Find optimal schedule
   const findSchedule = async () => {
-    if (!selectedBatch) {
-      setError('Please select a batch');
+    if (selectedBatches.length === 0) {
+      setError('Please select at least one batch');
       return;
     }
     if (selectedCourseNames.length === 0) {
@@ -130,7 +161,7 @@ export default function OptimalSchedulePage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          batch: selectedBatch,
+          batches: selectedBatches,
           selectedCourseNames,
           excludedAssignments,
         }),
@@ -162,21 +193,12 @@ export default function OptimalSchedulePage() {
       .sort((a, b) => a.startMinutes - b.startMinutes);
   }, [result, selectedDay]);
 
-  // Handle batch change
-  const handleBatchChange = (batch: string) => {
-    setSelectedBatch(batch);
-    setSelectedCourseNames([]);
-    setExcludedAssignments({});
-    setShowSchedule(false);
-    setResult(null);
-  };
-
   return (
     <div className="max-w-4xl mx-auto">
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-slate-800 mb-2">Optimal Schedule Finder</h1>
         <p className="text-slate-600">
-          Select your batch and courses, and we'll find the best section combination.
+          Select your batches and courses, and we'll find the best section combination.
         </p>
       </div>
 
@@ -186,25 +208,87 @@ export default function OptimalSchedulePage() {
           {/* Batch Selection */}
           <div className="mb-6">
             <label className="block font-semibold text-slate-800 mb-2">
-              Select Your Batch
+              Select Batches
             </label>
-            <select
-              value={selectedBatch}
-              onChange={(e) => handleBatchChange(e.target.value)}
-              className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none bg-white"
-              disabled={isLoading}
-            >
-              <option value="">
-                {isLoading ? 'Loading batches...' : 'Select a batch'}
-              </option>
-              {batches.map(batch => (
-                <option key={batch} value={batch}>{batch}</option>
-              ))}
-            </select>
+            
+            {/* Batch Search Input */}
+            <div className="relative course-dropdown mb-3">
+              <input
+                type="text"
+                placeholder="Search and select batches..."
+                className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none"
+                value={batchSearchQuery}
+                onChange={(e) => setBatchSearchQuery(e.target.value)}
+                onFocus={() => setIsBatchDropdownOpen(true)}
+                disabled={isLoading}
+              />
+
+              {/* Batch Dropdown */}
+              {isBatchDropdownOpen && (
+                <div className="course-dropdown-menu">
+                  {isLoading ? (
+                    <div className="p-4 text-center text-slate-500">
+                      <div className="spinner mx-auto mb-2"></div>
+                      Loading batches...
+                    </div>
+                  ) : filteredBatches.length === 0 ? (
+                    <div className="p-4 text-center text-slate-500">
+                      No batches found
+                    </div>
+                  ) : (
+                    filteredBatches.map(batch => {
+                      const isSelected = selectedBatches.includes(batch);
+                      return (
+                        <div
+                          key={batch}
+                          className={`course-option ${isSelected ? 'selected' : ''}`}
+                          onClick={() => toggleBatch(batch)}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-medium text-slate-800">{batch}</span>
+                            {isSelected && (
+                              <svg className="w-5 h-5 text-purple-600" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                              </svg>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Click outside to close batch dropdown */}
+            {isBatchDropdownOpen && (
+              <div 
+                className="fixed inset-0 z-40" 
+                onClick={() => setIsBatchDropdownOpen(false)}
+              ></div>
+            )}
+
+            {/* Selected Batches */}
+            {selectedBatches.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {selectedBatches.map(batch => (
+                  <div
+                    key={batch}
+                    className="chip bg-purple-100 text-purple-800 cursor-pointer hover:bg-purple-200"
+                    onClick={() => removeBatch(batch)}
+                  >
+                    {batch}
+                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                    </svg>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Course Selection (only show after batch is selected) */}
-          {selectedBatch && (
+          {selectedBatches.length > 0 && (
             <>
               <h2 className="font-semibold text-slate-800 mb-4">Select Courses</h2>
               
@@ -294,7 +378,7 @@ export default function OptimalSchedulePage() {
           {/* Find Optimal Schedule Button */}
           <button
             onClick={findSchedule}
-            disabled={!selectedBatch || selectedCourseNames.length === 0 || isGenerating}
+            disabled={selectedBatches.length === 0 || selectedCourseNames.length === 0 || isGenerating}
             className="mt-6 w-full bg-purple-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-purple-700 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
           >
             {isGenerating ? (
