@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getTimetableForCourses } from '@/lib/timetable-extractor';
-import { detectClashes, formatClash } from '@/lib/clash-detector';
+import { detectClashes, formatClash, filterValidSessions } from '@/lib/clash-detector';
 import { Course } from '@/lib/types';
 
 export async function POST(request: NextRequest) {
@@ -16,7 +16,10 @@ export async function POST(request: NextRequest) {
     }
 
     // Get timetable sessions for selected courses
-    const sessions = await getTimetableForCourses(selectedCourses);
+    const rawSessions = await getTimetableForCourses(selectedCourses);
+    
+    // Filter to ensure proper session counts (1 lab/week, 2 classes/week)
+    const sessions = filterValidSessions(rawSessions);
 
     // Detect clashes
     const clashes = detectClashes(sessions);

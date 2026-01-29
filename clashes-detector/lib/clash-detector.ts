@@ -1,6 +1,10 @@
 import { TimetableSession, Clash, OptimalScheduleResult } from './types';
 import { doTimeSlotsOverlap } from './time-parser';
 
+// Expected sessions per week
+const EXPECTED_LABS_PER_WEEK = 1;
+const EXPECTED_CLASSES_PER_WEEK = 2;
+
 /**
  * Detect clashes in a list of timetable sessions
  */
@@ -148,10 +152,12 @@ function findBestCombination(
 ): CombinationResult {
   // Base case: all courses assigned
   if (index === courseOptions.length) {
-    const clashes = detectClashes(currentSchedule);
+    // Filter sessions to proper counts before checking clashes
+    const validSchedule = filterValidSessions(currentSchedule);
+    const clashes = detectClashes(validSchedule);
     return {
       assignments: { ...currentAssignments },
-      schedule: [...currentSchedule],
+      schedule: validSchedule,
       clashCount: clashes.length,
     };
   }
@@ -203,4 +209,65 @@ export function formatClash(clash: Clash): string {
  */
 export function getClashMessage(clash: Clash): string {
   return `${clash.course1} clashes with ${clash.course2} on ${clash.day} ${clash.timeSlot1}`;
+}
+
+/**
+ * Filter sessions to ensure proper session counts per course:
+ * - Lab subjects: 1 lab per week
+ * - Non-lab subjects: 2 classes per week
+ * 
+ * If there are duplicates (same course, same day, same type), keep only one.
+ * Then limit to expected counts.
+ */
+export function filterValidSessions(sessions: TimetableSession[]): TimetableSession[] {
+  // Group sessions by course name
+  const courseSessionsMap: { [courseName: string]: TimetableSession[] } = {};
+  
+  sessions.forEach(session => {
+    if (!courseSessionsMap[session.courseName]) {
+      courseSessionsMap[session.courseName] = [];
+    }
+    courseSessionsMap[session.courseName].push(session);
+  });
+
+  const filteredSessions: TimetableSession[] = [];
+
+  Object.entries(courseSessionsMap).forEach(([courseName, courseSessions]) => {
+    const isLabCourse = courseName.toLowerCase().includes('lab');
+    
+    // Separate lab and class sessions
+    const labSessions = courseSessions.filter(s => s.sessionType === 'Lab');
+    const classSessions = courseSessions.filter(s => s.sessionType === 'Class');
+
+    // Remove duplicates (same day sessions - keep first only)
+    const uniqueLabSessions = removeDuplicateDays(labSessions);
+    const uniqueClassSessions = removeDuplicateDays(classSessions);
+
+    if (isLabCourse) {
+      // Lab course: take only 1 lab session
+      filteredSessions.push(...uniqueLabSessions.slice(0, EXPECTED_LABS_PER_WEEK));
+    } else {
+      // Regular course: take 2 class sessions
+      filteredSessions.push(...uniqueClassSessions.slice(0, EXPECTED_CLASSES_PER_WEEK));
+      // Also include any lab component (some courses have both)
+      filteredSessions.push(...uniqueLabSessions.slice(0, EXPECTED_LABS_PER_WEEK));
+    }
+  });
+
+  return filteredSessions;
+}
+
+/**
+ * Remove duplicate sessions on the same day (keep the first one)
+ */
+function removeDuplicateDays(sessions: TimetableSession[]): TimetableSession[] {
+  const seenDays = new Set<string>();
+  return sessions.filter(session => {
+    const key = `${session.day}_${session.sessionType}`;
+    if (seenDays.has(key)) {
+      return false;
+    }
+    seenDays.add(key);
+    return true;
+  });
 }
