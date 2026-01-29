@@ -67,6 +67,61 @@ function doSessionsOverlap(session1: TimetableSession, session2: TimetableSessio
 }
 
 /**
+ * Calculate total gap score for a schedule
+ * Gap = time between end of one class and start of next class on same day
+ * Lower score = more compact schedule
+ */
+function calculateTotalGapScore(sessions: TimetableSession[]): number {
+  // Group sessions by day
+  const daySessionsMap: { [day: string]: TimetableSession[] } = {};
+  
+  sessions.forEach(session => {
+    if (!daySessionsMap[session.day]) {
+      daySessionsMap[session.day] = [];
+    }
+    daySessionsMap[session.day].push(session);
+  });
+
+  let totalGap = 0;
+
+  // For each day, sort sessions by start time and calculate gaps
+  Object.values(daySessionsMap).forEach(daySessions => {
+    // Sort by start time
+    const sorted = daySessions
+      .filter(s => s.startMinutes !== 9999) // Only include sessions with valid times
+      .sort((a, b) => a.startMinutes - b.startMinutes);
+
+    // Calculate gaps between consecutive classes
+    for (let i = 0; i < sorted.length - 1; i++) {
+      const currentEnd = sorted[i].endMinutes;
+      const nextStart = sorted[i + 1].startMinutes;
+      
+      if (nextStart > currentEnd) {
+        // There's a gap
+        totalGap += (nextStart - currentEnd);
+      }
+    }
+  });
+
+  return totalGap;
+}
+
+/**
+ * Compare two schedule results - prioritize fewer clashes, then fewer gaps
+ */
+function isBetterSchedule(candidate: CombinationResult, current: CombinationResult): boolean {
+  // First priority: fewer clashes
+  if (candidate.clashCount < current.clashCount) {
+    return true;
+  }
+  if (candidate.clashCount > current.clashCount) {
+    return false;
+  }
+  // Same clash count: prefer fewer gaps
+  return candidate.gapScore < current.gapScore;
+}
+
+/**
  * Find optimal schedule for given courses within a batch
  * Returns assignments of course -> section that minimizes/eliminates clashes
  */
@@ -112,16 +167,26 @@ export function findOptimalSchedule(
     courseOptions.push({ courseName, sections: availableSections });
   }
 
-  // Try all combinations to find clash-free schedule
+  // Try all combinations to find clash-free schedule with minimal gaps
   const bestResult = findBestCombination(courseOptions, courseSessionsMap, 0, {}, []);
 
+  // Format gap time for display
+  const gapHours = Math.floor(bestResult.gapScore / 60);
+  const gapMins = bestResult.gapScore % 60;
+  const gapDisplay = gapHours > 0 
+    ? `${gapHours}h ${gapMins}m` 
+    : `${gapMins}m`;
+
   if (bestResult.clashCount === 0) {
+    const gapMessage = bestResult.gapScore > 0 
+      ? ` Total gaps between classes: ${gapDisplay}.`
+      : ' No gaps between classes!';
     return {
       success: true,
       schedule: bestResult.schedule,
       assignments: bestResult.assignments,
       clashes: [],
-      message: 'Found a clash-free schedule!',
+      message: `Found a clash-free schedule!${gapMessage}`,
     };
   } else {
     return {
@@ -138,6 +203,7 @@ interface CombinationResult {
   assignments: { [courseName: string]: string };
   schedule: TimetableSession[];
   clashCount: number;
+  gapScore: number; // Total gap minutes between classes (lower is better)
 }
 
 /**
@@ -155,10 +221,12 @@ function findBestCombination(
     // Filter sessions to proper counts before checking clashes
     const validSchedule = filterValidSessions(currentSchedule);
     const clashes = detectClashes(validSchedule);
+    const gapScore = calculateTotalGapScore(validSchedule);
     return {
       assignments: { ...currentAssignments },
       schedule: validSchedule,
       clashCount: clashes.length,
+      gapScore,
     };
   }
 
@@ -167,6 +235,7 @@ function findBestCombination(
     assignments: {},
     schedule: [],
     clashCount: Infinity,
+    gapScore: Infinity,
   };
 
   // Try each section for this course
@@ -184,13 +253,9 @@ function findBestCombination(
       newSchedule
     );
 
-    if (result.clashCount < bestResult.clashCount) {
+    // Compare: prioritize fewer clashes, then fewer gaps
+    if (isBetterSchedule(result, bestResult)) {
       bestResult = result;
-    }
-
-    // Early exit if we found a clash-free solution
-    if (bestResult.clashCount === 0) {
-      break;
     }
   }
 
