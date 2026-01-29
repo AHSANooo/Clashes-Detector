@@ -207,14 +207,18 @@ interface CombinationResult {
 }
 
 /**
- * Recursive function to try all section combinations
+ * Recursive function to try all section combinations with pruning
+ * Uses a two-phase approach:
+ * 1. First find all clash-free schedules
+ * 2. Among clash-free ones, pick the one with minimum gaps
  */
 function findBestCombination(
   courseOptions: { courseName: string; sections: string[] }[],
   courseSessionsMap: { [courseName: string]: { [section: string]: TimetableSession[] } },
   index: number,
   currentAssignments: { [courseName: string]: string },
-  currentSchedule: TimetableSession[]
+  currentSchedule: TimetableSession[],
+  bestSoFar: CombinationResult | null = null
 ): CombinationResult {
   // Base case: all courses assigned
   if (index === courseOptions.length) {
@@ -231,7 +235,7 @@ function findBestCombination(
   }
 
   const { courseName, sections } = courseOptions[index];
-  let bestResult: CombinationResult = {
+  let bestResult: CombinationResult = bestSoFar || {
     assignments: {},
     schedule: [],
     clashCount: Infinity,
@@ -245,12 +249,24 @@ function findBestCombination(
     const newAssignments = { ...currentAssignments, [courseName]: section };
     const newSchedule = [...currentSchedule, ...sectionSessions];
 
+    // Early pruning: if current partial schedule already has more clashes than best, skip
+    // Only check if we have at least 2 courses to compare
+    if (bestResult.clashCount === 0 && index >= 1) {
+      const partialClashes = detectClashes(filterValidSessions(newSchedule));
+      if (partialClashes.length > 0) {
+        // This branch will have clashes, but we already have a clash-free solution
+        // Skip this branch entirely
+        continue;
+      }
+    }
+
     const result = findBestCombination(
       courseOptions,
       courseSessionsMap,
       index + 1,
       newAssignments,
-      newSchedule
+      newSchedule,
+      bestResult
     );
 
     // Compare: prioritize fewer clashes, then fewer gaps
