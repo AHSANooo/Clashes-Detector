@@ -376,12 +376,11 @@ export default function OptimalSchedulePage() {
                         <button
                           key={sec}
                           onClick={() => toggleSectionExclusion(courseName, sec)}
-                          disabled={isAssigned && !isExcluded}
                           className={`px-3 py-1 rounded-full text-sm font-medium transition-colors ${
-                            isAssigned
-                              ? 'bg-purple-600 text-white'
-                              : isExcluded
-                                ? 'bg-red-100 text-red-600 line-through'
+                            isExcluded
+                              ? 'bg-red-100 text-red-600 line-through hover:bg-red-200'
+                              : isAssigned
+                                ? 'bg-purple-600 text-white hover:bg-purple-700'
                                 : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
                           }`}
                           title={isExcluded ? 'Click to include this section' : 'Click to exclude this section'}
