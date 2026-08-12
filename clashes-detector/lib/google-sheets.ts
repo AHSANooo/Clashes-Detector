@@ -1,8 +1,28 @@
 import { google } from 'googleapis';
 
 // Google Sheets configuration from environment variables
-const SPREADSHEET_ID = process.env.GOOGLE_SPREADSHEET_ID!;
+const SPREADSHEET_ID = getSpreadsheetId(process.env.GOOGLE_SPREADSHEET_ID);
 const TIMETABLE_SHEETS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+
+function getSpreadsheetId(value: string | undefined): string {
+  if (!value) {
+    throw new Error('GOOGLE_SPREADSHEET_ID is not set');
+  }
+
+  const trimmedValue = value.trim();
+  const match = trimmedValue.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  return match?.[1] ?? trimmedValue;
+}
+
+function getPrivateKey(value: string | undefined): string {
+  const privateKey = value?.replace(/\\n/g, '\n').trim();
+
+  if (!privateKey || privateKey.includes('YOUR_PRIVATE_KEY_HERE')) {
+    throw new Error('GOOGLE_PRIVATE_KEY is not configured with a valid service account key');
+  }
+
+  return privateKey;
+}
 
 // Get Google Sheets client
 function getSheetsClient() {
@@ -11,7 +31,7 @@ function getSheetsClient() {
       type: 'service_account',
       project_id: process.env.GOOGLE_PROJECT_ID,
       private_key_id: process.env.GOOGLE_PRIVATE_KEY_ID,
-      private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+      private_key: getPrivateKey(process.env.GOOGLE_PRIVATE_KEY),
       client_email: process.env.GOOGLE_CLIENT_EMAIL,
       client_id: process.env.GOOGLE_CLIENT_ID,
     },
