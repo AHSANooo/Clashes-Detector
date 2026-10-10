@@ -17,8 +17,8 @@ export function detectClashes(sessions: TimetableSession[]): Clash[] {
       const session1 = sessions[i];
       const session2 = sessions[j];
 
-      // Same course different sections don't count as clash
-      if (session1.courseName === session2.courseName) continue;
+      // Same course, same section, same batch is identical session
+      if (session1.courseName === session2.courseName && session1.section === session2.section && session1.batch === session2.batch) continue;
 
       // Check if same day and overlapping time
       if (session1.day === session2.day) {
@@ -28,9 +28,10 @@ export function detectClashes(sessions: TimetableSession[]): Clash[] {
         if (overlaps) {
           // Create unique key to avoid duplicate clash reports
           const clashKey = [
-            session1.courseName,
-            session2.courseName,
+            `${session1.courseName}(${session1.section})`,
+            `${session2.courseName}(${session2.section})`,
             session1.day,
+            session1.timeSlot
           ].sort().join('_');
 
           if (!seenClashes.has(clashKey)) {
@@ -319,73 +320,37 @@ function findBestCombination(
  * Format clash for display
  */
 export function formatClash(clash: Clash): string {
-  return `"${clash.course1}" (Section ${clash.section1}) clashes with "${clash.course2}" (Section ${clash.section2}) on ${clash.day} at ${clash.timeSlot1} / ${clash.timeSlot2}`;
+  if (clash.timeSlot1 === clash.timeSlot2) {
+    return `"${clash.course1}" (Section ${clash.section1}) clashes with "${clash.course2}" (Section ${clash.section2}) on ${clash.day} at ${clash.timeSlot1}`;
+  }
+  return `"${clash.course1}" (Section ${clash.section1}, ${clash.timeSlot1}) clashes with "${clash.course2}" (Section ${clash.section2}, ${clash.timeSlot2}) on ${clash.day}`;
 }
 
 /**
  * Get simple clash message
  */
 export function getClashMessage(clash: Clash): string {
-  return `${clash.course1} clashes with ${clash.course2} on ${clash.day} ${clash.timeSlot1}`;
+  return `${clash.course1} (${clash.section1}) clashes with ${clash.course2} (${clash.section2}) on ${clash.day} ${clash.timeSlot1}`;
 }
 
 /**
- * Filter sessions to ensure proper session counts per course:
- * - Lab subjects: 1 lab per week
- * - Non-lab subjects: 2 classes per week
- * 
- * If there are duplicates (same course, same day, same type), keep only one.
- * Then limit to expected counts.
+ * Filter sessions to remove invalid times and exact duplicates
  */
 export function filterValidSessions(sessions: TimetableSession[]): TimetableSession[] {
-  // Group sessions by course name
-  const courseSessionsMap: { [courseName: string]: TimetableSession[] } = {};
-  
-  sessions.forEach(session => {
-    if (!courseSessionsMap[session.courseName]) {
-      courseSessionsMap[session.courseName] = [];
+  // Only keep sessions with valid time
+  const valid = sessions.filter(s => s.timeSlot && s.timeSlot !== 'Unknown' && s.startMinutes !== 9999);
+
+  // Deduplicate exact same session entries (same course, section, batch, day, time, room)
+  const seen = new Set<string>();
+  const uniqueSessions: TimetableSession[] = [];
+
+  for (const session of valid) {
+    const key = `${session.courseName}_${session.section}_${session.batch}_${session.day}_${session.timeSlot}_${session.room}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      uniqueSessions.push(session);
     }
-    courseSessionsMap[session.courseName].push(session);
-  });
+  }
 
-  const filteredSessions: TimetableSession[] = [];
-
-  Object.entries(courseSessionsMap).forEach(([courseName, courseSessions]) => {
-    const isLabCourse = courseName.toLowerCase().includes('lab');
-    
-    // Separate lab and class sessions
-    const labSessions = courseSessions.filter(s => s.sessionType === 'Lab');
-    const classSessions = courseSessions.filter(s => s.sessionType === 'Class');
-
-    // Remove duplicates (same day sessions - keep first only)
-    const uniqueLabSessions = removeDuplicateDays(labSessions);
-    const uniqueClassSessions = removeDuplicateDays(classSessions);
-
-    if (isLabCourse) {
-      // Lab course: take only 1 lab session
-      filteredSessions.push(...uniqueLabSessions.slice(0, EXPECTED_LABS_PER_WEEK));
-    } else {
-      // Regular course: take 2 class sessions
-      filteredSessions.push(...uniqueClassSessions.slice(0, EXPECTED_CLASSES_PER_WEEK));
-      // Also include any lab component (some courses have both)
-      filteredSessions.push(...uniqueLabSessions.slice(0, EXPECTED_LABS_PER_WEEK));
-    }
-  });
-
-  return filteredSessions;
-}
-
-/**
- * Remove duplicate sessions on the same day (keep the first one)
- */
-function removeDuplicateDays(sessions: TimetableSession[]): TimetableSession[] {
-  const seenDays = new Set<string>();
-  return sessions.filter(session => {
-    const key = `${session.day}_${session.sessionType}`;
-    if (seenDays.has(key)) {
-      return false;
-    }
-    seenDays.add(key);
-    return true;
-  });
+  return uniqueSessions;
 }
