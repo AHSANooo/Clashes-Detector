@@ -5,6 +5,8 @@ import { Course, TimetableSession, Clash } from '@/lib/types';
 
 export default function ClashDetectorPage() {
   const [courses, setCourses] = useState<Course[]>([]);
+  const [batches, setBatches] = useState<string[]>([]);
+  const [selectedBatch, setSelectedBatch] = useState<string>('all');
   const [selectedCourses, setSelectedCourses] = useState<Course[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -36,7 +38,8 @@ export default function ClashDetectorPage() {
         throw new Error(errorData?.details || errorData?.error || 'Failed to fetch courses');
       }
       const data = await response.json();
-      setCourses(data.courses);
+      setCourses(data.courses || []);
+      setBatches(data.batches || []);
     } catch (err: any) {
       setError(err?.message || 'Failed to load courses. Please try again.');
       console.error(err);
@@ -45,17 +48,21 @@ export default function ClashDetectorPage() {
     }
   };
 
-  // Filter courses based on search
+  // Filter courses based on batch and search
   const filteredCourses = useMemo(() => {
-    if (!searchQuery) return courses;
-    const query = searchQuery.toLowerCase();
-    return courses.filter(c =>
+    let list = courses;
+    if (selectedBatch !== 'all') {
+      list = list.filter(c => c.batch === selectedBatch);
+    }
+    if (!searchQuery) return list;
+    const query = searchQuery.toLowerCase().trim();
+    return list.filter(c =>
       c.name.toLowerCase().includes(query) ||
       c.department.toLowerCase().includes(query) ||
       c.batch.toLowerCase().includes(query) ||
       c.section.toLowerCase().includes(query)
     );
-  }, [courses, searchQuery]);
+  }, [courses, selectedBatch, searchQuery]);
 
   // Toggle course selection
   const toggleCourse = (course: Course) => {
@@ -133,57 +140,116 @@ export default function ClashDetectorPage() {
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
           <h2 className="font-semibold text-slate-800 mb-4">Select Courses</h2>
           
-          {/* Search Input */}
-          <div className="relative course-dropdown mb-4">
-            <input
-              type="text"
-              placeholder="Search courses by name, department, batch..."
-              className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onFocus={() => setIsDropdownOpen(true)}
-            />
-            
-            {/* Dropdown */}
-            {isDropdownOpen && (
-              <div className="course-dropdown-menu">
-                {isLoading ? (
-                  <div className="p-4 text-center text-slate-500">
-                    <div className="spinner mx-auto mb-2"></div>
-                    Loading courses...
-                  </div>
-                ) : filteredCourses.length === 0 ? (
-                  <div className="p-4 text-center text-slate-500">
-                    No courses found
-                  </div>
-                ) : (
-                  filteredCourses.slice(0, 50).map(course => {
-                    const isSelected = selectedCourses.some(c => c.id === course.id);
-                    return (
-                      <div
-                        key={course.id}
-                        className={`course-option ${isSelected ? 'selected' : ''}`}
-                        onClick={() => toggleCourse(course)}
-                      >
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <div className="font-medium text-slate-800">{course.name}</div>
-                            <div className="text-sm text-slate-500">
-                              {course.department} • {course.batch} • Section {course.section}
-                            </div>
-                          </div>
-                          {isSelected && (
-                            <svg className="w-5 h-5 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
-                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                            </svg>
+          {/* Batch Filter & Search Row */}
+          <div className="grid md:grid-cols-3 gap-3 mb-4">
+            <div className="md:col-span-1">
+              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
+                Filter by Batch
+              </label>
+              <select
+                className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-700 font-medium focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm transition-all"
+                value={selectedBatch}
+                onChange={(e) => {
+                  setSelectedBatch(e.target.value);
+                  setIsDropdownOpen(true);
+                }}
+              >
+                <option value="all">All Batches ({courses.length})</option>
+                {batches.map(b => (
+                  <option key={b} value={b}>
+                    {b}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="md:col-span-2">
+              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
+                Search Courses
+              </label>
+              <div className="relative course-dropdown">
+                <input
+                  type="text"
+                  placeholder={
+                    selectedBatch === 'all'
+                      ? "Search by course, section, or batch..."
+                      : `Search courses in ${selectedBatch}...`
+                  }
+                  className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onFocus={() => setIsDropdownOpen(true)}
+                />
+                
+                {/* Dropdown */}
+                {isDropdownOpen && (
+                  <div className="course-dropdown-menu max-h-96 shadow-lg">
+                    {isLoading ? (
+                      <div className="p-4 text-center text-slate-500">
+                        <div className="spinner mx-auto mb-2"></div>
+                        Loading courses...
+                      </div>
+                    ) : filteredCourses.length === 0 ? (
+                      <div className="p-4 text-center text-slate-500">
+                        No courses found {selectedBatch !== 'all' ? `in ${selectedBatch}` : ''}
+                      </div>
+                    ) : (
+                      <>
+                        <div className="p-2.5 bg-slate-50 border-b border-slate-200 text-xs text-slate-500 flex justify-between items-center sticky top-0 z-10">
+                          <span>
+                            {selectedBatch === 'all'
+                              ? `Showing ${Math.min(filteredCourses.length, 150)} of ${filteredCourses.length} courses`
+                              : `${filteredCourses.length} courses in ${selectedBatch}`}
+                          </span>
+                          {selectedBatch === 'all' && (
+                            <span className="text-blue-600 font-medium">Select a batch to narrow down</span>
                           )}
                         </div>
-                      </div>
-                    );
-                  })
+                        {filteredCourses.slice(0, 150).map(course => {
+                          const isSelected = selectedCourses.some(c => c.id === course.id);
+                          return (
+                            <div
+                              key={course.id}
+                              className={`course-option ${isSelected ? 'selected' : ''}`}
+                              onClick={() => toggleCourse(course)}
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="min-w-0">
+                                  <div className="font-medium text-slate-800 flex items-center gap-2 flex-wrap">
+                                    <span>{course.name}</span>
+                                    {course.section && (
+                                      <span className="text-xs px-2 py-0.5 rounded bg-blue-50 text-blue-700 font-semibold border border-blue-200">
+                                        Section {course.section}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-xs text-slate-500 mt-0.5">
+                                    {course.batch} • {course.department}
+                                  </div>
+                                </div>
+                                {isSelected ? (
+                                  <div className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center flex-shrink-0">
+                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                                    </svg>
+                                  </div>
+                                ) : (
+                                  <div className="text-slate-300 hover:text-blue-600 flex-shrink-0">
+                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                                    </svg>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </>
+                    )}
+                  </div>
                 )}
               </div>
-            )}
+            </div>
           </div>
 
           {/* Click outside to close dropdown */}
