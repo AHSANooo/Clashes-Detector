@@ -101,10 +101,23 @@ export default function ClashDetectorPage() {
       if (!response.ok) throw new Error('Failed to generate timetable');
       
       const data = await response.json();
-      setSessions(data.sessions);
-      setClashes(data.clashes);
-      setClashMessages(data.clashMessages);
+      const returnedSessions: TimetableSession[] = data.sessions || [];
+      const returnedClashes: Clash[] = data.clashes || [];
+      setSessions(returnedSessions);
+      setClashes(returnedClashes);
+      setClashMessages(data.clashMessages || []);
       setShowTimetable(true);
+
+      // Auto-select first day that has clashes or sessions
+      const firstClashDay = returnedClashes[0]?.day;
+      if (firstClashDay && days.includes(firstClashDay)) {
+        setSelectedDay(firstClashDay);
+      } else if (!returnedSessions.some(s => s.day === selectedDay)) {
+        const firstDayWithSessions = days.find(d => returnedSessions.some(s => s.day === d));
+        if (firstDayWithSessions) {
+          setSelectedDay(firstDayWithSessions);
+        }
+      }
     } catch (err) {
       setError('Failed to check clashes. Please try again.');
       console.error(err);
@@ -361,42 +374,79 @@ export default function ClashDetectorPage() {
           )}
 
           {/* Timetable */}
-          {sessions.length > 0 && (
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-              {/* Day Tabs */}
-              <div className="flex overflow-x-auto border-b border-slate-200">
-                {days.map(day => (
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+            {/* Day Tabs */}
+            <div className="flex overflow-x-auto border-b border-slate-200">
+              {days.map(day => {
+                const daySessionsCount = sessions.filter(s => s.day === day).length;
+                const dayHasClash = clashes.some(c => c.day === day);
+                return (
                   <button
                     key={day}
-                    className={`day-tab ${selectedDay === day ? 'active' : ''}`}
+                    className={`day-tab ${selectedDay === day ? 'active' : ''} flex items-center gap-1.5`}
                     onClick={() => setSelectedDay(day)}
                   >
-                    {day}
+                    <span>{day}</span>
+                    {daySessionsCount > 0 && (
+                      <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+                        dayHasClash
+                          ? 'bg-red-100 text-red-700 font-bold'
+                          : 'bg-slate-100 text-slate-600'
+                      }`}>
+                        {daySessionsCount}
+                      </span>
+                    )}
+                    {dayHasClash && (
+                      <span className="w-2 h-2 rounded-full bg-red-500" title="Clash on this day"></span>
+                    )}
                   </button>
-                ))}
-              </div>
+                );
+              })}
+            </div>
 
-              {/* Sessions for Day */}
-              <div className="p-4">
-                {sessionsForDay.length === 0 ? (
-                  <div className="text-center text-slate-500 py-8">
-                    No classes on {selectedDay}
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {sessionsForDay.map(session => (
+            {/* Sessions for Day */}
+            <div className="p-4">
+              {sessions.length === 0 ? (
+                <div className="text-center text-slate-500 py-8">
+                  No scheduled class slots found in the timetable for the selected courses.
+                </div>
+              ) : sessionsForDay.length === 0 ? (
+                <div className="text-center text-slate-500 py-8">
+                  No classes scheduled on {selectedDay}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {sessionsForDay.map(session => {
+                    const sessionClash = clashes.find(c =>
+                      c.day === session.day &&
+                      (
+                        (c.course1 === session.courseName && c.section1 === session.section) ||
+                        (c.course2 === session.courseName && c.section2 === session.section)
+                      )
+                    );
+
+                    return (
                       <div
                         key={session.id}
-                        className={`timetable-card ${session.sessionType.toLowerCase()}`}
+                        className={`timetable-card ${session.sessionType.toLowerCase()} ${
+                          sessionClash ? 'border-2 border-red-500 bg-red-50/20' : ''
+                        }`}
                       >
-                        <div className="flex justify-between items-start">
+                        <div className="flex justify-between items-start gap-2">
                           <div>
-                            <h3 className="font-semibold text-slate-800">{session.courseName}</h3>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h3 className="font-semibold text-slate-800">{session.courseName}</h3>
+                              {sessionClash && (
+                                <span className="text-xs px-2 py-0.5 rounded bg-red-100 text-red-700 font-bold border border-red-300">
+                                  ⚠️ Clash
+                                </span>
+                              )}
+                            </div>
                             <p className="text-sm text-slate-600">
-                              Section {session.section} • {session.department}
+                              Section {session.section} • {session.department} • {session.batch}
                             </p>
                           </div>
-                          <span className={`text-xs font-medium px-2 py-1 rounded ${
+                          <span className={`text-xs font-medium px-2 py-1 rounded flex-shrink-0 ${
                             session.sessionType === 'Lab' 
                               ? 'bg-purple-100 text-purple-700' 
                               : 'bg-blue-100 text-blue-700'
@@ -405,27 +455,27 @@ export default function ClashDetectorPage() {
                           </span>
                         </div>
                         <div className="mt-3 flex items-center gap-4 text-sm text-slate-600">
-                          <span className="flex items-center gap-1">
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <span className="flex items-center gap-1 font-medium">
+                            <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                             </svg>
                             {session.timeSlot}
                           </span>
                           <span className="flex items-center gap-1">
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
                             </svg>
-                            {session.room}
+                            Room: {session.room}
                           </span>
                         </div>
                       </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-          )}
+          </div>
         </div>
       )}
     </div>
