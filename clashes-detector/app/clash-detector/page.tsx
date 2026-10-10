@@ -31,11 +31,14 @@ export default function ClashDetectorPage() {
       setIsLoading(true);
       setError(null);
       const response = await fetch('/api/courses');
-      if (!response.ok) throw new Error('Failed to fetch courses');
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.details || errorData?.error || 'Failed to fetch courses');
+      }
       const data = await response.json();
       setCourses(data.courses);
-    } catch (err) {
-      setError('Failed to load courses. Please try again.');
+    } catch (err: any) {
+      setError(err?.message || 'Failed to load courses. Please try again.');
       console.error(err);
     } finally {
       setIsLoading(false);

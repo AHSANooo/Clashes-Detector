@@ -33,7 +33,10 @@ export async function GET() {
   } catch (error) {
     console.error('Error fetching courses:', error);
     return NextResponse.json(
-      { error: 'Failed to fetch courses' },
+      { 
+        error: 'Failed to fetch courses',
+        details: error instanceof Error ? error.message : String(error)
+      },
       { status: 500 }
     );
   }
