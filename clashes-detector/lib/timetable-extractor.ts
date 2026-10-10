@@ -13,6 +13,81 @@ import {
   parseTimeSlot 
 } from './time-parser';
 
+interface SheetTimeMaps {
+  classTimesMap: { [col: number]: string };
+  labTimesMap: { [col: number]: string };
+  colRank: { [col: number]: number };
+  startDataRowIndex: number;
+}
+
+/**
+ * Analyze header rows to build time slot maps for each column
+ */
+function analyzeSheetHeaders(gridData: any[]): SheetTimeMaps {
+  let classTimeRow: any = null;
+  let labTimeRow: any = null;
+  let classTimeRowIdx = -1;
+  let labTimeRowIdx = -1;
+
+  const headerLimit = Math.min(8, gridData.length);
+  for (let i = 0; i < headerLimit; i++) {
+    const row = gridData[i];
+    const values = row?.values || [];
+    const firstCell = (getFormattedValue(values[0]) || '').toLowerCase();
+
+    if (firstCell === 'lab') {
+      labTimeRow = row;
+      labTimeRowIdx = i;
+      continue;
+    }
+
+    // Check if row has time patterns like 08:30 or 10:00
+    const hasTimes = values.some((cell: any) => {
+      const val = getFormattedValue(cell) || '';
+      return /\b\d{1,2}:\d{2}\b/.test(val);
+    });
+
+    if (hasTimes && !classTimeRow) {
+      classTimeRow = row;
+      classTimeRowIdx = i;
+    }
+  }
+
+  const classTimesMap: { [col: number]: string } = {};
+  const labTimesMap: { [col: number]: string } = {};
+  const colRank: { [col: number]: number } = {};
+
+  if (classTimeRow) {
+    let lastTime = 'Unknown';
+    let currentRank = 0;
+    const values = classTimeRow.values || [];
+    for (let c = 1; c < values.length; c++) {
+      const val = getFormattedValue(values[c]);
+      if (val && /\b\d{1,2}:\d{2}\b/.test(val)) {
+        lastTime = val.trim();
+        colRank[c] = currentRank++;
+      }
+      classTimesMap[c] = lastTime;
+    }
+  }
+
+  if (labTimeRow) {
+    let lastTime = 'Unknown';
+    const values = labTimeRow.values || [];
+    for (let c = 1; c < values.length; c++) {
+      const val = getFormattedValue(values[c]);
+      if (val && /\b\d{1,2}:\d{2}\b/.test(val)) {
+        lastTime = val.trim();
+      }
+      labTimesMap[c] = lastTime;
+    }
+  }
+
+  const startDataRowIndex = Math.max(classTimeRowIdx, labTimeRowIdx, 0) + 1;
+
+  return { classTimesMap, labTimesMap, colRank, startDataRowIndex };
+}
+
 /**
  * Get timetable sessions for selected courses
  */
@@ -28,34 +103,22 @@ export async function getTimetableForCourses(selectedCourses: Course[]): Promise
     if (!TIMETABLE_SHEETS.includes(sheetName)) return;
 
     const gridData = sheet.data?.[0]?.rowData;
-    if (!gridData || gridData.length < 6) return;
+    if (!gridData || gridData.length < 4) return;
 
-    // Build time column map
-    const { timeRow, colRank } = buildTimeColRank(gridData);
+    const { classTimesMap, labTimesMap, colRank, startDataRowIndex } = analyzeSheetHeaders(gridData);
 
-    // Find lab time row
-    let labTimeRow: any = null;
-    let labTimeRowIndex: number | null = null;
-
-    gridData.forEach((row: any, idx: number) => {
-      const values = row?.values || [];
-      const firstCellValue = getFormattedValue(values[0]);
-      if (firstCellValue?.toLowerCase() === 'lab') {
-        labTimeRow = row;
-        labTimeRowIndex = idx;
-      }
-    });
-
-    // Process data rows (starting from row 5)
-    gridData.slice(5).forEach((row: any, relIdx: number) => {
-      const rowIdx = relIdx + 5;
-      const isLab = labTimeRowIndex !== null && rowIdx >= labTimeRowIndex;
-
+    // Process data rows (classrooms and labs)
+    gridData.slice(startDataRowIndex).forEach((row: any, relIdx: number) => {
+      const rowIdx = relIdx + startDataRowIndex;
       const rowValues = row?.values || [];
       const roomCellValue = getFormattedValue(rowValues[0]);
       const room = cleanRoomData(roomCellValue || '');
+      if (!room || room === 'Unknown') return;
 
-      rowValues.forEach((cell: any, colIdx: number) => {
+      const isLabRoom = room.toLowerCase().includes('lab');
+
+      rowValues.slice(1).forEach((cell: any, relColIdx: number) => {
+        const colIdx = relColIdx + 1;
         const classEntry = getFormattedValue(cell) || '';
         if (!classEntry) return;
 
@@ -64,23 +127,23 @@ export async function getTimetableForCourses(selectedCourses: Course[]): Promise
         selectedCourses.forEach(selectedCourse => {
           if (matchesSelectedCourse(classEntry, selectedCourse, cellColor, batchColors)) {
             const { cleanedName, timeSlot: embeddedTime, hasEmbeddedTime } = parseEmbeddedTime(classEntry);
+            const courseName = hasEmbeddedTime ? cleanedName : selectedCourse.name;
+            const isLabCourse = selectedCourse.name.toLowerCase().includes('lab') || 
+                                classEntry.toLowerCase().includes('lab') || 
+                                isLabRoom;
 
             // Get time slot
-            let timeSlot: string;
+            let timeSlot = 'Unknown';
             if (hasEmbeddedTime) {
               timeSlot = embeddedTime;
-            } else if (isLab && labTimeRow) {
-              const labTimeValues = labTimeRow?.values || [];
-              timeSlot = getFormattedValue(labTimeValues[colIdx]) || 'Unknown';
+            } else if (isLabCourse) {
+              timeSlot = labTimesMap[colIdx] || classTimesMap[colIdx] || 'Unknown';
             } else {
-              const timeValues = timeRow?.values || [];
-              timeSlot = getFormattedValue(timeValues[colIdx]) || 'Unknown';
+              timeSlot = classTimesMap[colIdx] || 'Unknown';
             }
 
-            const courseName = hasEmbeddedTime ? cleanedName : selectedCourse.name;
             const rank = colRank[colIdx] ?? 999;
-            const sessionType = (isLab || courseName.toLowerCase().includes('lab')) ? 'Lab' : 'Class';
-
+            const sessionType = isLabCourse ? 'Lab' : 'Class';
             const { start, end } = parseTimeSlot(timeSlot);
 
             const session: TimetableSession = {
@@ -89,7 +152,7 @@ export async function getTimetableForCourses(selectedCourses: Course[]): Promise
               timeSlot,
               room,
               sessionType: sessionType as 'Class' | 'Lab',
-              courseName,
+              courseName: selectedCourse.name,
               section: selectedCourse.section,
               batch: selectedCourse.batch,
               department: selectedCourse.department,
@@ -119,46 +182,6 @@ export async function getTimetableForCourses(selectedCourses: Course[]): Promise
 }
 
 /**
- * Build time column rank map
- */
-function buildTimeColRank(gridData: any[]): { timeRow: any; colRank: { [col: number]: number } } {
-  let timeRow: any = null;
-  let startCol = 0;
-
-  // Find time row (usually has "Room" in first cell)
-  for (let i = 0; i < Math.min(10, gridData.length); i++) {
-    const rowValues = gridData[i]?.values || [];
-    if (rowValues.length > 0) {
-      const firstCellValue = getFormattedValue(rowValues[0])?.toLowerCase() || '';
-      if (firstCellValue.includes('room')) {
-        timeRow = gridData[i];
-        startCol = 1;
-        break;
-      }
-    }
-  }
-
-  // Fallback to row 4 if not found
-  if (!timeRow && gridData.length > 4) {
-    timeRow = gridData[4];
-    startCol = 0;
-  }
-
-  // Build column rank map
-  const colRank: { [col: number]: number } = {};
-  const timeValues = timeRow?.values || [];
-  
-  timeValues.forEach((cell: any, colIdx: number) => {
-    const formattedVal = getFormattedValue(cell);
-    if (colIdx >= startCol && formattedVal) {
-      colRank[colIdx] = Object.keys(colRank).length;
-    }
-  });
-
-  return { timeRow, colRank };
-}
-
-/**
  * Check if a cell matches a selected course
  */
 function matchesSelectedCourse(
@@ -175,29 +198,40 @@ function matchesSelectedCourse(
     return false;
   }
 
-  // Don't match lab entries for non-lab courses
-  if (!selectedCourse.name.toLowerCase().includes('lab') && entryToMatch.toLowerCase().includes('lab')) {
+  // Don't match lab entries for non-lab courses, and vice-versa
+  const isSelectedLab = selectedCourse.name.toLowerCase().includes('lab');
+  const isEntryLab = entryToMatch.toLowerCase().includes('lab');
+  if (!isSelectedLab && isEntryLab) {
+    return false;
+  }
+  if (isSelectedLab && !isEntryLab) {
     return false;
   }
 
   // Check section match
   const dept = selectedCourse.department;
   const section = selectedCourse.section;
-  const sectionPatterns = [
-    dept ? `(${dept}-${section})` : null,
-    `-${section})`,
-    `-${section} `,
-    `(${section})`,
-    ` ${section})`,
-  ].filter(Boolean) as string[];
 
-  if (!sectionPatterns.some(pattern => classEntry.includes(pattern))) {
-    return false;
+  if (section) {
+    const sectionPatterns = [
+      new RegExp(`\\(${dept}-${section}[,) ]`),
+      new RegExp(`\\(${dept}-${section}\\)`),
+      new RegExp(`-${section}[,) ]`),
+      new RegExp(`-${section}\\)`),
+      new RegExp(`\\(${section}\\)`),
+      new RegExp(`\\(${section}[,) ]`),
+      new RegExp(` ${section}\\)`),
+      new RegExp(` ${section} `)
+    ];
+
+    if (!sectionPatterns.some(pattern => pattern.test(classEntry))) {
+      return false;
+    }
   }
 
   // Check batch color match
   const expectedColor = Object.entries(batchColors).find(([, batch]) => batch === selectedCourse.batch)?.[0];
-  if (expectedColor && cellColor !== expectedColor) {
+  if (expectedColor && cellColor && cellColor !== expectedColor) {
     return false;
   }
 
@@ -212,7 +246,8 @@ function isSimilarSession(session1: TimetableSession, session2: TimetableSession
     session1.day === session2.day &&
     session1.timeSlot === session2.timeSlot &&
     session1.courseName.toLowerCase() === session2.courseName.toLowerCase() &&
-    session1.section === session2.section
+    session1.section === session2.section &&
+    session1.room === session2.room
   );
 }
 
@@ -238,33 +273,22 @@ export async function getAllSessionsForBatch(batch: string): Promise<TimetableSe
     if (!TIMETABLE_SHEETS.includes(sheetName)) return;
 
     const gridData = sheet.data?.[0]?.rowData;
-    if (!gridData || gridData.length < 6) return;
+    if (!gridData || gridData.length < 4) return;
 
-    const { timeRow, colRank } = buildTimeColRank(gridData);
-
-    // Find lab time row
-    let labTimeRow: any = null;
-    let labTimeRowIndex: number | null = null;
-
-    gridData.forEach((row: any, idx: number) => {
-      const values = row?.values || [];
-      const firstCellValue = getFormattedValue(values[0]);
-      if (firstCellValue?.toLowerCase() === 'lab') {
-        labTimeRow = row;
-        labTimeRowIndex = idx;
-      }
-    });
+    const { classTimesMap, labTimesMap, colRank, startDataRowIndex } = analyzeSheetHeaders(gridData);
 
     // Process data rows
-    gridData.slice(5).forEach((row: any, relIdx: number) => {
-      const rowIdx = relIdx + 5;
-      const isLab = labTimeRowIndex !== null && rowIdx >= labTimeRowIndex;
-
+    gridData.slice(startDataRowIndex).forEach((row: any, relIdx: number) => {
+      const rowIdx = relIdx + startDataRowIndex;
       const rowValues = row?.values || [];
       const roomCellValue = getFormattedValue(rowValues[0]);
       const room = cleanRoomData(roomCellValue || '');
+      if (!room || room === 'Unknown') return;
 
-      rowValues.forEach((cell: any, colIdx: number) => {
+      const isLabRoom = room.toLowerCase().includes('lab');
+
+      rowValues.slice(1).forEach((cell: any, relColIdx: number) => {
+        const colIdx = relColIdx + 1;
         const cellColor = getBackgroundColor(cell);
         if (cellColor !== targetColor) return;
 
@@ -273,6 +297,7 @@ export async function getAllSessionsForBatch(batch: string): Promise<TimetableSe
 
         // Extract section from entry
         const sectionPatterns = [
+          new RegExp(`\\(${department}-([A-Z])[,) ]`),
           new RegExp(`\\(${department}-([A-Z])\\)`),
           /-([A-Z])\)/,
           /-([A-Z])\s/,
@@ -293,18 +318,6 @@ export async function getAllSessionsForBatch(batch: string): Promise<TimetableSe
 
         const { cleanedName, timeSlot: embeddedTime, hasEmbeddedTime } = parseEmbeddedTime(classEntry);
 
-        // Get time slot
-        let timeSlot: string;
-        if (hasEmbeddedTime) {
-          timeSlot = embeddedTime;
-        } else if (isLab && labTimeRow) {
-          const labTimeValues = labTimeRow?.values || [];
-          timeSlot = getFormattedValue(labTimeValues[colIdx]) || 'Unknown';
-        } else {
-          const timeValues = timeRow?.values || [];
-          timeSlot = getFormattedValue(timeValues[colIdx]) || 'Unknown';
-        }
-
         // Clean course name
         let courseName = hasEmbeddedTime ? cleanedName : classEntry;
         sectionPatterns.forEach(pattern => {
@@ -315,12 +328,24 @@ export async function getAllSessionsForBatch(batch: string): Promise<TimetableSe
           courseName = courseName.slice(0, -1).trim();
         }
 
+        const isLabCourse = courseName.toLowerCase().includes('lab') || isLabRoom;
+
+        // Get time slot
+        let timeSlot = 'Unknown';
+        if (hasEmbeddedTime) {
+          timeSlot = embeddedTime;
+        } else if (isLabCourse) {
+          timeSlot = labTimesMap[colIdx] || classTimesMap[colIdx] || 'Unknown';
+        } else {
+          timeSlot = classTimesMap[colIdx] || 'Unknown';
+        }
+
         const rank = colRank[colIdx] ?? 999;
-        const sessionType = (isLab || courseName.toLowerCase().includes('lab')) ? 'Lab' : 'Class';
+        const sessionType = isLabCourse ? 'Lab' : 'Class';
         const { start, end } = parseTimeSlot(timeSlot);
 
         const session: TimetableSession = {
-          id: `${sheetName}_${colIdx}_${rowIdx}_${section}`,
+          id: `${sheetName}_${colIdx}_${rowIdx}_${section}_${courseName}`,
           day: sheetName,
           timeSlot,
           room,
