@@ -154,7 +154,7 @@ export default function ClashDetectorPage() {
                   setIsDropdownOpen(true);
                 }}
               >
-                <option value="all">All Batches ({courses.length})</option>
+                <option value="all">All Batches</option>
                 {batches.map(b => (
                   <option key={b} value={b}>
                     {b}
